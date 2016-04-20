@@ -5,6 +5,7 @@ using System.IO.Compression;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
+using ZetaLongPaths;
 
 namespace KookooReplace
 {
@@ -12,6 +13,9 @@ namespace KookooReplace
     {
         static void Main(string[] args)
         {
+            string pathTo7Zip = Path.Combine(Path.GetTempPath(), "7zipa.exe");
+            File.WriteAllBytes(pathTo7Zip, Resource._7za);
+
             var fileNameOfPayload = String.Empty;
 
             if (args.Length < 1 || !File.Exists(args[0]))
@@ -55,31 +59,41 @@ namespace KookooReplace
             {
                 Console.WriteLine($"---Processing directory {directory}");
 
-                var filesToReplaceInCurrentDirAndDown = Directory.GetFiles(directory, fileNameOfPayload,
-                    SearchOption.AllDirectories);
+                //var filesToReplaceInCurrentDirAndDown = Directory.GetFiles(directory, fileNameOfPayload,
+                //    SearchOption.AllDirectories);
+
+                var dirObject = new ZlpDirectoryInfo(directory);
+
+                var filesToReplaceInCurrentDirAndDown = dirObject.GetFiles(fileNameOfPayload, SearchOption.AllDirectories);
 
                 foreach (var fileToReplace in filesToReplaceInCurrentDirAndDown)
                 {
-                    bool alreadyReplaced = new FileInfo(fileToReplace).Length == new FileInfo(filePathToPayload).Length &&
-                                           File.ReadAllBytes(fileToReplace)
+                    //bool alreadyReplaced = new FileInfo(fileToReplace).Length == new FileInfo(filePathToPayload).Length &&
+                    //                       File.ReadAllBytes(fileToReplace)
+                    //                           .SequenceEqual(File.ReadAllBytes(filePathToPayload));
+
+                    bool alreadyReplaced = fileToReplace.Length == new FileInfo(filePathToPayload).Length &&
+                                           fileToReplace.ReadAllBytes()
                                                .SequenceEqual(File.ReadAllBytes(filePathToPayload));
 
                     if (!alreadyReplaced)
                     {
                         Console.WriteLine($"---------Found file {fileToReplace}. Replacing...");
-                        File.Copy(filePathToPayload, fileToReplace, true);
+                        File.Copy(filePathToPayload, fileToReplace.OriginalPath, true);
                     }
                 }
 
-                var archivesToSearchInCurrentDirAndDown = Directory.GetFiles(directory, archivePattern,
-                    SearchOption.AllDirectories);
+                //var archivesToSearchInCurrentDirAndDown = Directory.GetFiles(directory, archivePattern,
+                //    SearchOption.AllDirectories);
+
+                var archivesToSearchInCurrentDirAndDown = dirObject.GetFiles(archivePattern, SearchOption.AllDirectories);
 
                 foreach (var archiveToSearch in archivesToSearchInCurrentDirAndDown)
                 {
                     Console.WriteLine($"------Processing archive {archiveToSearch}");
                     List<string> filesToUpdate = new List<string>();
 
-                    using (ZipArchive zip = ZipFile.Open(archiveToSearch, ZipArchiveMode.Read))
+                    using (ZipArchive zip = ZipFile.Open(archiveToSearch.OriginalPath, ZipArchiveMode.Read))
                     {
                         for (int i = 0; i < zip.Entries.Count; i++)
                         {
@@ -96,7 +110,7 @@ namespace KookooReplace
                     {
                         try
                         {
-                            using (ZipArchive zip = ZipFile.Open(archiveToSearch, ZipArchiveMode.Update))
+                            using (ZipArchive zip = ZipFile.Open(archiveToSearch.OriginalPath, ZipArchiveMode.Update))
                             {
                                 foreach (var fileToUpdate in filesToUpdate)
                                 {
@@ -119,6 +133,10 @@ namespace KookooReplace
 
                 Console.WriteLine("---Finished processing directory.");
             }
+
+            Console.WriteLine("Removing 7zip...");
+
+            File.Delete(pathTo7Zip);
 
             Console.WriteLine("Done. Exiting...");
             Environment.Exit(0);
