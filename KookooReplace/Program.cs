@@ -1,10 +1,10 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.IO;
-using System.IO.Compression;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
+using ICSharpCode.SharpZipLib.Zip;
 using ZetaLongPaths;
 
 namespace KookooReplace
@@ -13,8 +13,8 @@ namespace KookooReplace
     {
         static void Main(string[] args)
         {
-            string pathTo7Zip = Path.Combine(Path.GetTempPath(), "7zipa.exe");
-            File.WriteAllBytes(pathTo7Zip, Resource._7za);
+            //string pathTo7Zip = Path.Combine(Path.GetTempPath(), "7zipa.exe");
+            //File.WriteAllBytes(pathTo7Zip, Resource._7za);
 
             var fileNameOfPayload = String.Empty;
 
@@ -93,39 +93,45 @@ namespace KookooReplace
                     Console.WriteLine($"------Processing archive {archiveToSearch}");
                     List<string> filesToUpdate = new List<string>();
 
-                    using (ZipArchive zip = ZipFile.Open(archiveToSearch.OriginalPath, ZipArchiveMode.Read))
+                    using (ZipFile zip = new ZipFile(archiveToSearch.OriginalPath))
                     {
-                        for (int i = 0; i < zip.Entries.Count; i++)
+                        for (int i = 0; i < zip.Count; i++)
                         {
-                            var entry = zip.Entries[i];
+                            var entry = zip[i];
 
-                            if (entry.Name == fileNameOfPayload)
+                            var testValue = entry.Name.LastIndexOf("/") >= 0 ? entry.Name.Substring(entry.Name.LastIndexOf("/") + 1) : entry.Name;
+
+                            if (testValue == fileNameOfPayload)
                             {
-                                filesToUpdate.Add(entry.FullName);
+                                filesToUpdate.Add(entry.Name);
                             }
                         }
                     }
 
                     if (filesToUpdate.Count > 0)
-                    {
-                        try
                         {
-                            using (ZipArchive zip = ZipFile.Open(archiveToSearch.OriginalPath, ZipArchiveMode.Update))
+                            try
                             {
-                                foreach (var fileToUpdate in filesToUpdate)
+                                using (ZipFile zip = new ZipFile(archiveToSearch.OriginalPath))
                                 {
-                                    Console.WriteLine($"---------Found file {archiveToSearch} {fileToUpdate}. Replacing...");
-                                    zip.Entries.Single(e => e.FullName == fileToUpdate).Delete();
-                                    zip.CreateEntryFromFile(filePathToPayload, fileToUpdate, CompressionLevel.NoCompression);
+                                    foreach (var fileToUpdate in filesToUpdate)
+                                    {
+                                        zip.BeginUpdate();
+                                        Console.WriteLine($"---------Found file {archiveToSearch} {fileToUpdate}. Replacing...");
+                                        var entry = zip.FindEntry(fileToUpdate, false);
+                                        zip.Add(filePathToPayload, fileToUpdate);
+                                        zip.CommitUpdate();
+                                    }
+
+                                    zip.Close();
                                 }
                             }
-                        }
-                        catch (IOException)
-                        {
-                            Console.WriteLine($"------Can't update archive {archiveToSearch}. File is locked.");
-                        }
+                            catch (IOException)
+                            {
+                                Console.WriteLine($"------Can't update archive {archiveToSearch}. File is locked.");
+                            }
 
-                    }
+                        }
 
                     Console.WriteLine("------Finished processing archive.");
                 }
@@ -134,9 +140,9 @@ namespace KookooReplace
                 Console.WriteLine("---Finished processing directory.");
             }
 
-            Console.WriteLine("Removing 7zip...");
+            //Console.WriteLine("Removing 7zip...");
 
-            File.Delete(pathTo7Zip);
+            //File.Delete(pathTo7Zip);
 
             Console.WriteLine("Done. Exiting...");
             Environment.Exit(0);
