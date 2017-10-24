@@ -4,6 +4,7 @@ using System.IO;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
+using ICSharpCode.SharpZipLib.Core;
 using ICSharpCode.SharpZipLib.Zip;
 using ZetaLongPaths;
 
@@ -13,9 +14,6 @@ namespace KookooReplace
     {
         static void Main(string[] args)
         {
-            //string pathTo7Zip = Path.Combine(Path.GetTempPath(), "7zipa.exe");
-            //File.WriteAllBytes(pathTo7Zip, Resource._7za);
-
             var fileNameOfPayload = String.Empty;
 
             if (args.Length < 1 || !File.Exists(args[0]))
@@ -59,19 +57,12 @@ namespace KookooReplace
             {
                 Console.WriteLine($"---Processing directory {directory}");
 
-                //var filesToReplaceInCurrentDirAndDown = Directory.GetFiles(directory, fileNameOfPayload,
-                //    SearchOption.AllDirectories);
-
                 var dirObject = new ZlpDirectoryInfo(directory);
 
                 var filesToReplaceInCurrentDirAndDown = dirObject.GetFiles(fileNameOfPayload, SearchOption.AllDirectories);
 
                 foreach (var fileToReplace in filesToReplaceInCurrentDirAndDown)
                 {
-                    //bool alreadyReplaced = new FileInfo(fileToReplace).Length == new FileInfo(filePathToPayload).Length &&
-                    //                       File.ReadAllBytes(fileToReplace)
-                    //                           .SequenceEqual(File.ReadAllBytes(filePathToPayload));
-
                     bool alreadyReplaced = fileToReplace.Length == new FileInfo(filePathToPayload).Length &&
                                            fileToReplace.ReadAllBytes()
                                                .SequenceEqual(File.ReadAllBytes(filePathToPayload));
@@ -83,9 +74,6 @@ namespace KookooReplace
                     }
                 }
 
-                //var archivesToSearchInCurrentDirAndDown = Directory.GetFiles(directory, archivePattern,
-                //    SearchOption.AllDirectories);
-
                 var archivesToSearchInCurrentDirAndDown = dirObject.GetFiles(archivePattern, SearchOption.AllDirectories);
 
                 foreach (var archiveToSearch in archivesToSearchInCurrentDirAndDown)
@@ -93,7 +81,11 @@ namespace KookooReplace
                     Console.WriteLine($"------Processing archive {archiveToSearch}");
                     List<string> filesToUpdate = new List<string>();
 
-                    using (ZipFile zip = new ZipFile(archiveToSearch.OriginalPath))
+                    Console.WriteLine($"------Openning file to search for target entries...");
+                    
+                    var archivePath = new ZlpFileInfo(archiveToSearch.OriginalPath);
+                    //using (ZipFile zip = new ZipFile(archiveToSearch.OriginalPath))
+                    using (ZipFile zip = new ZipFile(archivePath.OpenRead()))
                     {
                         for (int i = 0; i < zip.Count; i++)
                         {
@@ -112,7 +104,7 @@ namespace KookooReplace
                         {
                             try
                             {
-                                using (ZipFile zip = new ZipFile(archiveToSearch.OriginalPath))
+                                using (ZipFile zip = new ZipFile(archivePath.OpenWrite()))
                                 {
                                     foreach (var fileToUpdate in filesToUpdate)
                                     {
