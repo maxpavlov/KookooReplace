@@ -84,8 +84,8 @@ namespace KookooReplace
                     Console.WriteLine($"------Openning file to search for target entries...");
                     
                     var archivePath = new ZlpFileInfo(archiveToSearch.OriginalPath);
-                    //using (ZipFile zip = new ZipFile(archiveToSearch.OriginalPath))
-                    using (ZipFile zip = new ZipFile(archivePath.OpenRead()))
+                    var streamToFile = archivePath.OpenRead();
+                    using (ZipFile zip = new ZipFile(streamToFile))
                     {
                         for (int i = 0; i < zip.Count; i++)
                         {
@@ -101,43 +101,95 @@ namespace KookooReplace
                     }
 
                     if (filesToUpdate.Count > 0)
-                        {
-                            try
-                            {
-                                using (ZipFile zip = new ZipFile(archivePath.OpenWrite()))
-                                {
-                                    foreach (var fileToUpdate in filesToUpdate)
-                                    {
-                                        zip.BeginUpdate();
-                                        Console.WriteLine($"---------Found file {archiveToSearch} {fileToUpdate}. Replacing...");
-                                        var entry = zip.FindEntry(fileToUpdate, false);
-                                        zip.Add(filePathToPayload, fileToUpdate);
-                                        zip.CommitUpdate();
-                                    }
+                    {
+                        streamToFile = archivePath.OpenWrite();
+                        var idealFileStream = File.OpenRead(filePathToPayload);
 
-                                    zip.Close();
-                                }
-                            }
-                            catch (IOException)
+                        Console.BackgroundColor = ConsoleColor.DarkGreen;
+                        Console.WriteLine($"------Openning file to update found entries...");
+                        Console.ResetColor();
+
+                        try
+                        { 
+                            foreach (var fileToUpdate in filesToUpdate)
                             {
+                                UpdateZipInMemory(streamToFile, idealFileStream, fileToUpdate);
+                            }
+                        }
+                        catch (Exception ex)
+                            {
+                                Console.BackgroundColor = ConsoleColor.Red;
                                 Console.WriteLine($"------Can't update archive {archiveToSearch}. File is locked.");
+                                Console.WriteLine($"------filePathToPayload was {filePathToPayload}");
+                                Console.WriteLine(ex.Message);
+                                Console.WriteLine(ex.StackTrace);
+                                Console.WriteLine(ex.InnerException?.Message);
+                                Console.ResetColor();
                             }
 
                         }
 
+                    Console.BackgroundColor = ConsoleColor.DarkGreen;
                     Console.WriteLine("------Finished processing archive.");
+                    Console.ResetColor();
                 }
 
 
                 Console.WriteLine("---Finished processing directory.");
             }
 
-            //Console.WriteLine("Removing 7zip...");
-
-            //File.Delete(pathTo7Zip);
-
             Console.WriteLine("Done. Exiting...");
             Environment.Exit(0);
+        }
+
+        /// <summary>
+        /// Updates a zip file (in a disk or memorystream) adding the entry contained in the second stream.
+        /// </summary>
+        /// <param name="zipStream">Zip file, could be a disk or memory stream. Must be seekable. </param>
+        /// <param name="entryStream">Stream containing a file to be added. </param>
+        /// <param name="entryName">Name to appear in the zip entry. </param>
+        /// 
+        private static void UpdateZipInMemory(Stream zipStream, Stream entryStream, String entryName)
+        {
+
+            // The zipStream is expected to contain the complete zipfile to be updated
+            ZipFile zipFile = new ZipFile(zipStream);
+
+            zipFile.BeginUpdate();
+
+            // To use the entryStream as a file to be added to the zip,
+            // we need to put it into an implementation of IStaticDataSource.
+            CustomStaticDataSource sds = new CustomStaticDataSource();
+            sds.SetStream(entryStream);
+
+            // If an entry of the same name already exists, it will be overwritten; otherwise added.
+            zipFile.Add(sds, entryName);
+
+            // Both CommitUpdate and Close must be called.
+            zipFile.CommitUpdate();
+            // Set this so that Close does not close the memorystream
+            zipFile.IsStreamOwner = false;
+            zipFile.Close();
+
+            // Reposition to the start for the convenience of the caller.
+            zipStream.Position = 0;
+        }
+
+        public class CustomStaticDataSource : IStaticDataSource
+        {
+            private Stream _stream;
+            // Implement method from IStaticDataSource
+            public Stream GetSource()
+            {
+                return _stream;
+            }
+
+            // Call this to provide the memorystream
+            public void SetStream(Stream inputStream)
+            {
+                _stream = inputStream;
+                _stream.Position = 0;
+            }
         }
 
     }
