@@ -13,6 +13,11 @@ namespace KookooReplace
 {
     class Program
     {
+        enum Mode
+        {
+            Folder = 1,
+            SQLImage = 2
+        }
 
         class Options
         {
