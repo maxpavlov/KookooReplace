@@ -1,11 +1,13 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Diagnostics.Eventing.Reader;
 using System.IO;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 using ICSharpCode.SharpZipLib.Core;
 using CommandLine;
+using CommandLine.Text;
 using ICSharpCode.SharpZipLib.Zip;
 using ZetaLongPaths;
 
@@ -13,72 +15,119 @@ namespace KookooReplace
 {
     class Program
     {
-        enum Mode
+        public enum Mode
         {
             Folder = 1,
             SQLImage = 2
         }
 
-        class Options
+        public class Options
         {
-            [Option('r', "read", Required = true, HelpText = "Input files to be processed.")]
-            public IEnumerable<string> InputFiles { get; set; }
+            [Option('r',
+                "rootDirectory",
+                Default = ".",
+                Required = false,
+                HelpText = "Defines a directory which serves as a root for recursive \"deep dive\" to find files to replace with etalon file.")]
+            public string RootDirectory { get; set; }
+
+            [Option('f',
+                "fileToReplaceWith",
+                Required = true,
+                HelpText = "A file path or a name in case located in the current folder of the etalon file that the other files with the same name are recursivelly replaced.")]
+            public string File { get; set; }
+
+            [Option('m', 
+                "mode", 
+                Required = false, 
+                HelpText = "Kookoo Replace can operate either in folder or sql image mode to replace file in folder or archive. Folder mode is assumed default.", 
+                Default = Mode.Folder)]
+            public Mode Mode { get; set; }
 
             // Omitting long name, defaults to name of property, ie "--verbose"
-            [Option(
-              Default = false,
-              HelpText = "Prints all messages to standard output.")]
-            public bool Verbose { get; set; }
+            [Option('a', "archive",
+                Required = false,
+                HelpText = "Defines which type of archives will Kookoo Replace look into to find files to replace. Can be a | separated array of extensions: jar|orb|zip.",
+                Separator = '|')]
+            public IEnumerable<string> ArchiveExtensions { get; set; }
 
-            [Option("stdin",
-              Default = false,
-              HelpText = "Read from stdin")]
-            public bool stdin { get; set; }
+            [Option('t', 
+                "Table", 
+                Required = false, 
+                Default = " ",
+                HelpText = "Defines a table name from which the images will be extracted for procession. If this parameter is specified, 'f' and 'i' params must also be specified.")]
+            public string Table { get; set; }
 
-            [Value(0, MetaName = "offset", HelpText = "File offset.")]
-            public long? Offset { get; set; }
+            [Option('F',
+                "fileNameColumn",
+                Required = false,
+                HelpText = "Defines a column name where a script can find a file name to materialize the image to for futher procession.",
+                Default = " "
+                )]
+            public string FileNameColumn { get; set; }
+
+
+            [Option('i',
+                "imageColumn",
+                Required = false,
+                HelpText = "Defines a column name where a script can find an image to materialize the image to for futher procession.",
+                Default = " "
+            )]
+            public string ImageColumn { get; set; }
+
+            [Option('c',
+                "connectionString",
+                Required = false,
+                HelpText = "In case SQL image mode is used, a connection string to a database where the target images are located.")]
+            public string ConnectionString { get; set; }
         }
 
         static void Main(string[] args)
         {
-            var fileNameOfPayload = String.Empty;
+            Parser.Default.ParseArguments<Options>(args)
+                .WithParsed<Options>(o =>
+                {
+                    if (o.Mode == Mode.Folder) RunFolderMode(o);
+                    //else RunSQLMode(o);
+                }).WithNotParsed(OutputErrorsAndExit);
 
-            if (args.Length < 1 || !File.Exists(args[0]))
+            
+        }
+
+        private static void OutputErrorsAndExit(IEnumerable<Error> errors)
+        {
+            Console.WriteLine("Error parsing arguments. Details below:");
+            foreach (var error in errors)
             {
-                Console.WriteLine(
-                    "I need a file name of the file to replace found files with...Please restart with the file name provided.");
-                Console.WriteLine("Exiting.");
-                Environment.Exit(1);
+                Console.WriteLine(error);
             }
+            Environment.Exit(1);
+        }
 
-            fileNameOfPayload = args[0];
+        public static void RunFolderMode(Options o)
+        {
+            var payloadFilePath = Path.GetFullPath(o.File);
 
-            var archiveExtension = String.Empty;
-
-            if (args.Length > 1)
-            {
-                archiveExtension = args[1];
-            }
-
-            var payloadFileExistis = File.Exists(fileNameOfPayload);
-            var currentDirectory = Directory.GetCurrentDirectory();
-
+            var payloadFileExistis = File.Exists(payloadFilePath);
+            var rootDirectory = o.RootDirectory;
 
             if (!payloadFileExistis)
             {
                 Console.WriteLine(
-                    $"Can't find file to replace occurences with. {fileNameOfPayload} is not in the current folder {currentDirectory}.");
+                    $"Can't find file to replace occurences with. {payloadFilePath} does not point to an existing file.");
                 Console.WriteLine("Exiting.");
                 Environment.Exit(1);
             }
 
-            var filePathToPayload =
-                Directory.GetFiles(currentDirectory, fileNameOfPayload, SearchOption.TopDirectoryOnly).FirstOrDefault();
+            var fileNameOfPayload = Path.GetFileName(payloadFilePath);
 
-            var allDirectoriesToSearchForFilesToReplace = Directory.GetDirectories(currentDirectory, "*",
+            var allDirectoriesToSearchForFilesToReplace = Directory.GetDirectories(rootDirectory, "*",
                 SearchOption.TopDirectoryOnly);
 
-            var archivePattern = String.IsNullOrEmpty(archiveExtension) ? "*.zip" : "*." + archiveExtension;
+            if (File.Exists(rootDirectory + "\\" + fileNameOfPayload))
+            {
+                allDirectoriesToSearchForFilesToReplace = allDirectoriesToSearchForFilesToReplace
+                    .Concat(new string[] {rootDirectory}).ToArray();
+            }
 
             foreach (var directory in allDirectoriesToSearchForFilesToReplace)
             {
@@ -90,64 +139,69 @@ namespace KookooReplace
 
                 foreach (var fileToReplace in filesToReplaceInCurrentDirAndDown)
                 {
-                    bool alreadyReplaced = fileToReplace.Length == new FileInfo(filePathToPayload).Length &&
+                    bool alreadyReplaced = fileToReplace.Length == new FileInfo(payloadFilePath).Length &&
                                            fileToReplace.ReadAllBytes()
-                                               .SequenceEqual(File.ReadAllBytes(filePathToPayload));
+                                               .SequenceEqual(File.ReadAllBytes(payloadFilePath));
 
                     if (!alreadyReplaced)
                     {
                         Console.WriteLine($"---------Found file {fileToReplace}. Replacing...");
-                        File.Copy(filePathToPayload, fileToReplace.OriginalPath, true);
+                        File.Copy(payloadFilePath, fileToReplace.OriginalPath, true);
                     }
                 }
 
-                var archivesToSearchInCurrentDirAndDown = dirObject.GetFiles(archivePattern, SearchOption.AllDirectories);
-
-                foreach (var archiveToSearch in archivesToSearchInCurrentDirAndDown)
+                foreach (var archiveExtension in o.ArchiveExtensions)
                 {
-                    Console.WriteLine($"------Processing archive {archiveToSearch}");
-                    List<string> filesToUpdate = new List<string>();
+                    var archivesToSearchInCurrentDirAndDown =
+                        dirObject.GetFiles("*." + archiveExtension, SearchOption.AllDirectories);
 
-                    Console.WriteLine($"------Openning file to search for target entries...");
-                    
-                    var archivePath = new ZlpFileInfo(archiveToSearch.OriginalPath);
-                    var streamToFile = archivePath.OpenRead();
-                    using (ZipFile zip = new ZipFile(streamToFile))
+                    foreach (var archiveToSearch in archivesToSearchInCurrentDirAndDown)
                     {
-                        for (int i = 0; i < zip.Count; i++)
+                        Console.WriteLine($"------Processing archive {archiveToSearch}");
+                        List<string> filesToUpdate = new List<string>();
+
+                        Console.WriteLine($"------Openning file to search for target entries...");
+
+                        var archivePath = new ZlpFileInfo(archiveToSearch.OriginalPath);
+                        var streamToFile = archivePath.OpenRead();
+                        using (ZipFile zip = new ZipFile(streamToFile))
                         {
-                            var entry = zip[i];
-
-                            var testValue = entry.Name.LastIndexOf("/") >= 0 ? entry.Name.Substring(entry.Name.LastIndexOf("/") + 1) : entry.Name;
-
-                            if (testValue == fileNameOfPayload)
+                            for (int i = 0; i < zip.Count; i++)
                             {
-                                filesToUpdate.Add(entry.Name);
+                                var entry = zip[i];
+
+                                var testValue = entry.Name.LastIndexOf("/") >= 0
+                                    ? entry.Name.Substring(entry.Name.LastIndexOf("/") + 1)
+                                    : entry.Name;
+
+                                if (testValue == fileNameOfPayload)
+                                {
+                                    filesToUpdate.Add(entry.Name);
+                                }
                             }
                         }
-                    }
 
-                    if (filesToUpdate.Count > 0)
-                    {
-                        streamToFile = archivePath.OpenWrite();
-                        var idealFileStream = File.OpenRead(filePathToPayload);
+                        if (filesToUpdate.Count > 0)
+                        {
+                            streamToFile = archivePath.OpenWrite();
+                            var idealFileStream = File.OpenRead(payloadFilePath);
 
-                        Console.BackgroundColor = ConsoleColor.DarkGreen;
-                        Console.WriteLine($"------Openning file to update found entries...");
-                        Console.ResetColor();
+                            Console.BackgroundColor = ConsoleColor.DarkGreen;
+                            Console.WriteLine($"------Openning file to update found entries...");
+                            Console.ResetColor();
 
-                        try
-                        { 
-                            foreach (var fileToUpdate in filesToUpdate)
+                            try
                             {
-                                UpdateZipInMemory(streamToFile, idealFileStream, fileToUpdate);
+                                foreach (var fileToUpdate in filesToUpdate)
+                                {
+                                    UpdateZipInMemory(streamToFile, idealFileStream, fileToUpdate);
+                                }
                             }
-                        }
-                        catch (Exception ex)
+                            catch (Exception ex)
                             {
                                 Console.BackgroundColor = ConsoleColor.Red;
                                 Console.WriteLine($"------Can't update archive {archiveToSearch}. File is locked.");
-                                Console.WriteLine($"------filePathToPayload was {filePathToPayload}");
+                                Console.WriteLine($"------payloadFilePath was {payloadFilePath}");
                                 Console.WriteLine(ex.Message);
                                 Console.WriteLine(ex.StackTrace);
                                 Console.WriteLine(ex.InnerException?.Message);
@@ -156,9 +210,10 @@ namespace KookooReplace
 
                         }
 
-                    Console.BackgroundColor = ConsoleColor.DarkGreen;
-                    Console.WriteLine("------Finished processing archive.");
-                    Console.ResetColor();
+                        Console.BackgroundColor = ConsoleColor.DarkGreen;
+                        Console.WriteLine("------Finished processing archive.");
+                        Console.ResetColor();
+                    }
                 }
 
 
