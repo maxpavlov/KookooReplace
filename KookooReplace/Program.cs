@@ -1,8 +1,12 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Data;
+using System.Data.SqlClient;
 using System.Diagnostics.Eventing.Reader;
 using System.IO;
 using System.Linq;
+using System.Runtime.CompilerServices;
+using System.Security.Policy;
 using System.Text;
 using System.Threading.Tasks;
 using ICSharpCode.SharpZipLib.Core;
@@ -29,6 +33,12 @@ namespace KookooReplace
                 Required = false,
                 HelpText = "Defines a directory which serves as a root for recursive \"deep dive\" to find files to replace with etalon file.")]
             public string RootDirectory { get; set; }
+
+            [Option('u',
+                "uniqueID",
+                Required = false,
+                HelpText = "Defines a unique ID of the table where the file replacement is happening in case of SQLImage mode is engaged.")]
+            public string IdColumn { get; set; }
 
             [Option('f',
                 "fileToReplaceWith",
@@ -81,13 +91,24 @@ namespace KookooReplace
             public string ConnectionString { get; set; }
         }
 
+        public class UpdateRecord
+        {
+            public string Id { get; set; }
+            public string FilePath { get; set; }
+        }
+
         static void Main(string[] args)
         {
-            Parser.Default.ParseArguments<Options>(args)
+            var parser = new Parser(settings =>
+            {
+                settings.CaseInsensitiveEnumValues = true;
+            });
+
+            parser.ParseArguments<Options>(args)
                 .WithParsed<Options>(o =>
                 {
                     if (o.Mode == Mode.Folder) RunFolderMode(o);
-                    //else RunSQLMode(o);
+                    else RunSQLMode(o);
                 }).WithNotParsed(OutputErrorsAndExit);
 
             
@@ -101,6 +122,219 @@ namespace KookooReplace
                 Console.WriteLine(error);
             }
             Environment.Exit(1);
+        }
+
+        public static void RunSQLMode(Options o)
+        {
+            var payloadFilePath = Path.GetFullPath(o.File);
+            var updateList = new List<UpdateRecord>();
+
+            var payloadFileExistis = File.Exists(payloadFilePath);
+
+            if (!payloadFileExistis)
+            {
+                Console.WriteLine(
+                    $"Can't find file to replace occurences with. {payloadFilePath} does not point to an existing file.");
+                Console.WriteLine("Exiting.");
+                Environment.Exit(1);
+            }
+
+            var fileNameOfPayload = Path.GetFileName(payloadFilePath);
+
+            if (String.IsNullOrEmpty(o.ConnectionString) || string.IsNullOrEmpty(o.FileNameColumn) ||
+                string.IsNullOrEmpty(o.ImageColumn) || string.IsNullOrEmpty(o.Table) || string.IsNullOrEmpty(o.IdColumn))
+            {
+                Console.ForegroundColor = ConsoleColor.Red;
+                Console.WriteLine("When selecting SQLImage mode, the following parameters must be specified: -f, -F, -t, -c, -i, -u and an -a optionally. Please make sure you speficy all.");
+                Console.WriteLine("Exiting...");
+                Environment.Exit(1);
+            }
+
+            if (!String.IsNullOrEmpty(o.RootDirectory))
+            {
+                var originalColor = Console.ForegroundColor;
+                Console.ForegroundColor = ConsoleColor.DarkYellow;
+                Console.WriteLine("-r paramter value is ignored when operating in an SQLImage mode.");
+                Console.WriteLine("Proceeding...");
+                Console.ForegroundColor = originalColor;
+            }
+
+            using (var connection = new SqlConnection(
+                "Data Source=db1.radacode.global;Password=gerhartCold*;Persist Security Info=True;User ID=sa;Initial Catalog=cf_prod;"
+            ))
+            {
+                var workingDir = GetTempDirectory();
+
+                try
+                {
+                    connection.Open();
+                    Console.WriteLine("Connected successfully.");
+
+                    string selectStatement = $"SELECT {o.IdColumn},{o.FileNameColumn},{o.ImageColumn} FROM {o.Table}";
+                    string updateStatement = @"UPDATE @table
+                    SET @dataColumn = @data
+                    WHERE @idColumn = @id";
+                    updateStatement = updateStatement.Replace("@table", o.Table);
+                    updateStatement = updateStatement.Replace("@idColumn", o.IdColumn);
+                    updateStatement = updateStatement.Replace("@dataColumn", o.ImageColumn);
+
+                    using (var selectCommand = new SqlCommand(selectStatement, connection))
+                    {
+                        using (var reader = selectCommand.ExecuteReader())
+                        {
+                            while (reader.Read())
+                            {
+                                var currentFileName = reader[o.FileNameColumn];
+                                var currentFilePath = workingDir + "\\" + currentFileName;
+                                var currentId = reader[o.IdColumn].ToString();
+
+                                Console.WriteLine($"Processing {currentFileName}...");
+                                var bytes = (Byte[]) reader[o.ImageColumn];
+                                FileStream fs = new FileStream(
+                                    currentFilePath,
+                                    FileMode.OpenOrCreate);
+                                fs.Write(bytes, 0, bytes.Length);
+                                fs.Close();
+                                Console.WriteLine("File is written to a temp directory for procession...");
+                                
+                                //UPDATE FILE
+                                if (Equals(currentFileName,fileNameOfPayload))
+                                {
+                                    var originalColor = Console.ForegroundColor;
+                                    Console.ForegroundColor = ConsoleColor.Cyan;
+                                    Console.WriteLine("File extracted from DB is named the same as the etalon file. Direct replacement commencing...");
+                                    File.Copy(payloadFilePath, currentFilePath, true);
+                                    Console.WriteLine("Target file rewritten.");
+                                    Console.ForegroundColor = originalColor;
+
+                                    updateList.Add(new UpdateRecord {Id = currentId, FilePath = currentFilePath});
+                                }
+                                else if (o.ArchiveExtensions.Contains(Path.GetExtension(currentFilePath).Remove(0,1)))
+                                {
+                                    //Dive into archive to search for a payload to replace with.
+                                    Console.WriteLine($"------Processing archive {currentFilePath}");
+                                    List<string> filesToUpdate = new List<string>();
+
+                                    Console.WriteLine($"------Openning file to search for target entries...");
+
+                                    var archivePath = new ZlpFileInfo(currentFilePath);
+                                    var streamToFile = archivePath.OpenRead();
+                                    using (ZipFile zip = new ZipFile(streamToFile))
+                                    {
+                                        for (int i = 0; i < zip.Count; i++)
+                                        {
+                                            var entry = zip[i];
+
+                                            var testValue = entry.Name.LastIndexOf("/") >= 0
+                                                ? entry.Name.Substring(entry.Name.LastIndexOf("/") + 1)
+                                                : entry.Name;
+
+                                            if (testValue == fileNameOfPayload)
+                                            {
+                                                filesToUpdate.Add(entry.Name);
+                                            }
+                                        }
+                                    }
+
+                                    if (filesToUpdate.Count > 0)
+                                    {
+                                        streamToFile = archivePath.OpenWrite();
+                                        var idealFileStream = File.OpenRead(payloadFilePath);
+
+                                        Console.BackgroundColor = ConsoleColor.DarkGreen;
+                                        Console.WriteLine($"------Openning file to update found entries...");
+                                        Console.ResetColor();
+
+                                        try
+                                        {
+                                            foreach (var fileToUpdate in filesToUpdate)
+                                            {
+                                                UpdateZipInMemory(streamToFile, idealFileStream, fileToUpdate);
+                                            }
+                                        }
+                                        catch (Exception ex)
+                                        {
+                                            Console.BackgroundColor = ConsoleColor.Red;
+                                            Console.WriteLine($"------Can't update archive {currentFilePath}. File is locked.");
+                                            Console.WriteLine($"------payloadFilePath was {payloadFilePath}");
+                                            Console.WriteLine(ex.Message);
+                                            Console.WriteLine(ex.StackTrace);
+                                            Console.WriteLine(ex.InnerException?.Message);
+                                            Console.ResetColor();
+                                            streamToFile.Close();
+                                        }
+
+                                        streamToFile.Close();
+
+                                    }
+
+                                    Console.BackgroundColor = ConsoleColor.DarkGreen;
+                                    Console.WriteLine("------Finished processing archive.");
+                                    Console.ResetColor();
+
+                                    updateList.Add(new UpdateRecord
+                                    {
+                                         Id = currentId,
+                                         FilePath = currentFilePath
+                                    });
+                                }
+                            }
+                        }
+                        //PUT IT BACK INTO DATABASE
+                        foreach (var updateRecord in updateList)
+                        {
+                            var originalColor = Console.ForegroundColor;
+                            Console.ForegroundColor = ConsoleColor.Cyan;
+                            Console.WriteLine($"Going to update {updateRecord.FilePath} in {updateRecord.Id} row...");
+
+                            using (var updateCommand = new SqlCommand(updateStatement, connection))
+                            {
+                                updateCommand.Parameters.AddWithValue("@id", updateRecord.Id);
+                                updateCommand.Parameters
+                                        .Add("@data", SqlDbType.Image, GetFile(updateRecord.FilePath).Length).Value =
+                                    GetFile(updateRecord.FilePath);
+
+                                updateCommand.ExecuteNonQuery();
+                            }
+
+                            Console.WriteLine("Updated sucessfully. Proceeding to traverse the update list...");
+                            Console.ForegroundColor = originalColor;
+                        }
+                    }
+
+                    Directory.Delete(workingDir, true);
+                }
+                catch (Exception ex)
+                {
+                    Directory.Delete(workingDir, true);
+                    var originalColor = Console.ForegroundColor;
+                    Console.WriteLine($"Error has occured: \n {ex.Message}");
+                    Console.WriteLine("Exiting...");
+                    Environment.Exit(1);
+                }
+            }
+
+        }
+
+        public static byte[] GetFile(string filePath)
+        {
+            FileStream stream = new FileStream(
+                filePath, FileMode.Open, FileAccess.Read);
+            BinaryReader reader = new BinaryReader(stream);
+
+            byte[] file = reader.ReadBytes((int)stream.Length);
+
+            reader.Close();
+            stream.Close();
+
+            return file;
+        }
+
+        public static string GetTempDirectory()
+        {
+            string path = Path.GetFileNameWithoutExtension(Path.GetRandomFileName());
+            Directory.CreateDirectory(path);
+            return path;
         }
 
         public static void RunFolderMode(Options o)
