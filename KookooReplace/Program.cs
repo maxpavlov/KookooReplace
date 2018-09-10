@@ -102,6 +102,7 @@ namespace KookooReplace
             var parser = new Parser(settings =>
             {
                 settings.CaseInsensitiveEnumValues = true;
+                settings.HelpWriter = Console.Out;
             });
 
             parser.ParseArguments<Options>(args)
