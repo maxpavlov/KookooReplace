@@ -161,7 +161,7 @@ namespace KookooReplace
             }
 
             using (var connection = new SqlConnection(
-                "Data Source=db1.radacode.global;Password=***REMOVED***;Persist Security Info=True;User ID=sa;Initial Catalog=cf_prod;"
+                "Data Source=******;Password=*******;Persist Security Info=True;User ID=sa;Initial Catalog=******;"
             ))
             {
                 var workingDir = GetTempDirectory();
