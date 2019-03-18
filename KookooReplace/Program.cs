@@ -46,10 +46,10 @@ namespace KookooReplace
                 HelpText = "A file path or a name in case located in the current folder of the etalon file that the other files with the same name are recursivelly replaced.")]
             public string File { get; set; }
 
-            [Option('m', 
-                "mode", 
-                Required = false, 
-                HelpText = "Kookoo Replace can operate either in folder or sql image mode to replace file in folder or archive. Folder mode is assumed default.", 
+            [Option('m',
+                "mode",
+                Required = false,
+                HelpText = "Kookoo Replace can operate either in folder or sql image mode to replace file in folder or archive. Folder mode is assumed default.",
                 Default = Mode.Folder)]
             public Mode Mode { get; set; }
 
@@ -60,9 +60,9 @@ namespace KookooReplace
                 Separator = '|')]
             public IEnumerable<string> ArchiveExtensions { get; set; }
 
-            [Option('t', 
-                "Table", 
-                Required = false, 
+            [Option('t',
+                "Table",
+                Required = false,
                 Default = " ",
                 HelpText = "Defines a table name from which the images will be extracted for procession. If this parameter is specified, 'f' and 'i' params must also be specified.")]
             public string Table { get; set; }
@@ -112,7 +112,7 @@ namespace KookooReplace
                     else RunSQLMode(o);
                 }).WithNotParsed(OutputErrorsAndExit);
 
-            
+
         }
 
         private static void OutputErrorsAndExit(IEnumerable<Error> errors)
@@ -161,7 +161,7 @@ namespace KookooReplace
             }
 
             using (var connection = new SqlConnection(
-                "Data Source=db1.radacode.global;Password=gerhartCold*;Persist Security Info=True;User ID=sa;Initial Catalog=cf_prod;"
+                o.ConnectionString
             ))
             {
                 var workingDir = GetTempDirectory();
@@ -197,7 +197,7 @@ namespace KookooReplace
                                 fs.Write(bytes, 0, bytes.Length);
                                 fs.Close();
                                 Console.WriteLine("File is written to a temp directory for procession...");
-                                
+
                                 //UPDATE FILE
                                 if (Equals(currentFileName,fileNameOfPayload))
                                 {
@@ -465,7 +465,7 @@ namespace KookooReplace
         /// <param name="zipStream">Zip file, could be a disk or memory stream. Must be seekable. </param>
         /// <param name="entryStream">Stream containing a file to be added. </param>
         /// <param name="entryName">Name to appear in the zip entry. </param>
-        /// 
+        ///
         private static void UpdateZipInMemory(Stream zipStream, Stream entryStream, String entryName)
         {
 
