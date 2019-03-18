@@ -181,6 +181,7 @@ namespace KookooReplace
 
                     using (var selectCommand = new SqlCommand(selectStatement, connection))
                     {
+                        selectCommand.CommandTimeout = 0;
                         using (var reader = selectCommand.ExecuteReader())
                         {
                             while (reader.Read())
@@ -290,6 +291,7 @@ namespace KookooReplace
 
                             using (var updateCommand = new SqlCommand(updateStatement, connection))
                             {
+                                updateCommand.CommandTimeout = 0;
                                 updateCommand.Parameters.AddWithValue("@id", updateRecord.Id);
                                 updateCommand.Parameters
                                         .Add("@data", SqlDbType.Image, GetFile(updateRecord.FilePath).Length).Value =
